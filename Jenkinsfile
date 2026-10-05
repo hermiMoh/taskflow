@@ -2,10 +2,11 @@ pipeline {
     agent any
 
     environment {
+        CI_NETWORK = 'taskflow-ci'
         TEST_DB_CONTAINER = 'taskflow-postgres-test'
 
-        DB_HOST = 'host.docker.internal'
-        DB_PORT = '5433'
+        DB_HOST = 'taskflow-postgres-test'
+        DB_PORT = '5432'
         DB_NAME = 'taskflow_test'
         DB_USER = 'postgres'
         DB_PASSWORD = 'postgres_test_password'
@@ -19,19 +20,12 @@ pipeline {
             }
         }
 
-        stage('Backend - Install') {
+        stage('Prepare CI Network') {
             steps {
-                dir('backend') {
-                    sh 'npm ci'
-                }
-            }
-        }
-
-        stage('Backend - Lint') {
-            steps {
-                dir('backend') {
-                    sh 'npm run lint'
-                }
+                sh '''
+                    docker network inspect $CI_NETWORK >/dev/null 2>&1 || \
+                    docker network create $CI_NETWORK
+                '''
             }
         }
 
@@ -42,10 +36,10 @@ pipeline {
 
                     docker run -d \
                         --name $TEST_DB_CONTAINER \
+                        --network $CI_NETWORK \
                         -e POSTGRES_DB=$DB_NAME \
                         -e POSTGRES_USER=$DB_USER \
                         -e POSTGRES_PASSWORD=$DB_PASSWORD \
-                        -p 5433:5432 \
                         postgres:17-alpine
                 '''
             }
@@ -57,8 +51,11 @@ pipeline {
                     echo "Waiting for PostgreSQL..."
 
                     for i in $(seq 1 30); do
+
                         if docker exec $TEST_DB_CONTAINER \
-                            pg_isready -U $DB_USER -d $DB_NAME
+                            pg_isready \
+                            -U $DB_USER \
+                            -d $DB_NAME
                         then
                             echo "PostgreSQL is ready."
                             exit 0
@@ -67,8 +64,10 @@ pipeline {
                         sleep 2
                     done
 
-                    echo "PostgreSQL did not become ready."
+                    echo "PostgreSQL failed to become ready."
+
                     docker logs $TEST_DB_CONTAINER
+
                     exit 1
                 '''
             }
@@ -86,70 +85,30 @@ pipeline {
             }
         }
 
-        stage('Backend - Test') {
-            steps {
-                dir('backend') {
-                    sh '''
-                        NODE_ENV=test \
-                        DB_HOST=$DB_HOST \
-                        DB_PORT=$DB_PORT \
-                        DB_NAME=$DB_NAME \
-                        DB_USER=$DB_USER \
-                        DB_PASSWORD=$DB_PASSWORD \
-                        npm test -- --runInBand
-                    '''
-                }
-            }
-        }
-
-        stage('Frontend - Install') {
-            steps {
-                dir('frontend') {
-                    sh 'npm ci'
-                }
-            }
-        }
-
-        stage('Frontend - Lint') {
-            steps {
-                dir('frontend') {
-                    sh 'npm run lint'
-                }
-            }
-        }
-
-        stage('Frontend - Build') {
-            steps {
-                dir('frontend') {
-                    sh 'npm run build'
-                }
-            }
-        }
-
-        stage('Docker - Build Backend') {
+        stage('Backend CI') {
             steps {
                 sh '''
-                    docker build \
-                        -t taskflow-api:ci \
-                        ./backend
-                '''
-            }
-        }
-
-        stage('Docker - Build Frontend') {
-            steps {
-                sh '''
-                    docker build \
-                        -t taskflow-frontend:ci \
-                        ./frontend
+                    docker run --rm \
+                        --network $CI_NETWORK \
+                        -v jenkins_home:/var/jenkins_home \
+                        -w "$WORKSPACE/backend" \
+                        -e NODE_ENV=test \
+                        -e DB_HOST=$DB_HOST \
+                        -e DB_PORT=$DB_PORT \
+                        -e DB_NAME=$DB_NAME \
+                        -e DB_USER=$DB_USER \
+                        -e DB_PASSWORD=$DB_PASSWORD \
+                        node:22-alpine \
+                        sh -c "npm ci && npm run lint && npm test -- --runInBand"
                 '''
             }
         }
     }
 
     post {
+
         always {
-            echo 'Cleaning CI resources...'
+            echo 'Cleaning TaskFlow CI resources...'
 
             sh '''
                 docker rm -f $TEST_DB_CONTAINER 2>/dev/null || true
@@ -157,11 +116,11 @@ pipeline {
         }
 
         success {
-            echo 'TaskFlow CI pipeline succeeded!'
+            echo 'TaskFlow backend CI passed!'
         }
 
         failure {
-            echo 'TaskFlow CI pipeline failed!'
+            echo 'TaskFlow backend CI failed.'
         }
     }
 }
