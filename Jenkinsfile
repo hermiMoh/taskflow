@@ -30,6 +30,21 @@ pipeline {
             }
         }
 
+        stage('Build Metadata') {
+            steps {
+                script {
+                    env.GIT_SHORT_SHA = sh(
+                        script: 'git rev-parse --short HEAD',
+                        returnStdout: true
+                    ).trim()
+                }
+
+                echo "Version: ${APP_VERSION}"
+                echo "Commit: ${GIT_SHORT_SHA}"
+                echo "Jenkins build: ${BUILD_NUMBER}"
+            }
+        }
+
         stage('Prepare CI Network') {
             steps {
                 sh '''
