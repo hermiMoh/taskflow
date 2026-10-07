@@ -20,6 +20,16 @@ pipeline {
             }
         }
 
+        stage('Read Version') {
+            steps {
+                script {
+                    env.APP_VERSION = readFile('VERSION').trim()
+                }
+
+                echo "Building TaskFlow version ${APP_VERSION}"
+            }
+        }
+
         stage('Prepare CI Network') {
             steps {
                 sh '''
@@ -112,6 +122,32 @@ pipeline {
                         -w "$WORKSPACE/frontend" \
                         node:22-alpine \
                         sh -c "npm ci && npm run lint && npm run build"
+                '''
+            }
+        }
+
+        stage('Build Backend Image') {
+            steps {
+                sh '''
+                    echo "Building backend version $APP_VERSION"
+
+                    docker build \
+                        -t taskflow-backend:$APP_VERSION \
+                        -t taskflow-backend:latest \
+                        ./backend
+                '''
+            }
+        }
+
+        stage('Build Frontend Image') {
+            steps {
+                sh '''
+                    echo "Building frontend version $APP_VERSION"
+
+                    docker build \
+                        -t taskflow-frontend:$APP_VERSION \
+                        -t taskflow-frontend:latest \
+                        ./frontend
                 '''
             }
         }
