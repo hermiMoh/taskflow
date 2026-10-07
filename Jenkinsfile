@@ -103,6 +103,18 @@ pipeline {
                 '''
             }
         }
+    
+        stage('Frontend CI') {
+            steps {
+                sh '''
+                    docker run --rm \
+                        -v jenkins_home:/var/jenkins_home \
+                        -w "$WORKSPACE/frontend" \
+                        node:22-alpine \
+                        sh -c "npm ci && npm run lint && npm run build"
+                '''
+            }
+        }
     }
 
     post {
