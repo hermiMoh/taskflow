@@ -10,6 +10,8 @@ pipeline {
         DB_NAME = 'taskflow_test'
         DB_USER = 'postgres'
         DB_PASSWORD = 'postgres_test_password'
+
+        DOCKERHUB_USERNAME = 'medhermi'
     }
 
     stages {
@@ -164,6 +166,83 @@ pipeline {
                         -t taskflow-frontend:latest \
                         ./frontend
                 '''
+            }
+        }
+
+        stage('Security Scan - Backend') {
+            steps {
+                sh '''
+                    docker run --rm \
+                        -v /var/run/docker.sock:/var/run/docker.sock \
+                        aquasec/trivy:latest \
+                        image \
+                        --severity HIGH,CRITICAL \
+                        --ignore-unfixed \
+                        taskflow-backend:$APP_VERSION
+                '''
+            }
+        }
+
+        stage('Security Scan - Frontend') {
+            steps {
+                sh '''
+                    docker run --rm \
+                        -v /var/run/docker.sock:/var/run/docker.sock \
+                        aquasec/trivy:latest \
+                        image \
+                        --severity HIGH,CRITICAL \
+                        --ignore-unfixed \
+                        taskflow-frontend:$APP_VERSION
+                '''
+            }
+        }
+
+        stage('Push Images to Docker Hub') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'dockerhub-creds',
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_TOKEN'
+                    )
+                ]) {
+                    sh '''
+                        echo "$DOCKER_TOKEN" | \
+                            docker login \
+                            -u "$DOCKER_USER" \
+                            --password-stdin
+
+                        docker tag \
+                            taskflow-backend:$APP_VERSION \
+                            $DOCKER_USER/taskflow-backend:$APP_VERSION
+
+                        docker tag \
+                            taskflow-backend:$APP_VERSION \
+                            $DOCKER_USER/taskflow-backend:latest
+
+                        docker tag \
+                            taskflow-frontend:$APP_VERSION \
+                            $DOCKER_USER/taskflow-frontend:$APP_VERSION
+
+                        docker tag \
+                            taskflow-frontend:$APP_VERSION \
+                            $DOCKER_USER/taskflow-frontend:latest
+
+                        docker push \
+                            $DOCKER_USER/taskflow-backend:$APP_VERSION
+
+                        docker push \
+                            $DOCKER_USER/taskflow-backend:latest
+
+                        docker push \
+                            $DOCKER_USER/taskflow-frontend:$APP_VERSION
+
+                        docker push \
+                            $DOCKER_USER/taskflow-frontend:latest
+
+                        docker logout
+                    '''
+                }
             }
         }
     }
