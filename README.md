@@ -4,6 +4,8 @@ TaskFlow is a full-stack task management application built with React, Express, 
 
 ## Architecture
 
+![TaskFlow Architecture](docs/architecture.png)
+
 ```text
 Developer → GitHub → Jenkins (local Docker host)
                        ├─ PostgreSQL integration-test container
