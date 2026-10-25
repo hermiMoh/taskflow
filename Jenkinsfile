@@ -393,7 +393,61 @@ pipeline {
                     '''
                 }
             }
-        }   
+        }  
+
+        stage('Smoke Test - TaskFlow API') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'aws-taskflow-jenkins',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+                    sh '''
+                        set -eu
+
+                        export KUBECONFIG="$WORKSPACE/kubeconfig"
+
+                        aws eks update-kubeconfig \
+                            --name "$EKS_CLUSTER" \
+                            --region "$AWS_DEFAULT_REGION"
+
+                        echo "Starting API port-forward..."
+
+                        kubectl port-forward \
+                            -n "$K8S_NAMESPACE" \
+                            svc/taskflow-backend \
+                            3001:3000 \
+                            > /tmp/taskflow-port-forward.log 2>&1 &
+
+                        PF_PID=$!
+
+                        trap 'kill "$PF_PID" 2>/dev/null || true' EXIT
+
+                        echo "Waiting for API..."
+
+                        for i in $(seq 1 20); do
+                            if curl --silent --fail \
+                                http://127.0.0.1:3001/api/tasks \
+                                > /dev/null; then
+
+                                echo "TaskFlow API smoke test PASSED!"
+                                exit 0
+                            fi
+
+                            sleep 2
+                        done
+
+                        echo "TaskFlow API smoke test FAILED!"
+
+                        cat /tmp/taskflow-port-forward.log
+
+                        exit 1
+                    '''
+                }
+            }
+        } 
     }
 
     post {
