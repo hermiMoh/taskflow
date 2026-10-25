@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: taskflow-backend
+  namespace: taskflow
+
+spec:
+  replicas: 2
+
+  selector:
+    matchLabels:
+      app: taskflow-backend
+
+  template:
+    metadata:
+      labels:
+        app: taskflow-backend
+
+    spec:
+      containers:
+        - name: backend
+          image: 453971897797.dkr.ecr.eu-north-1.amazonaws.com/taskflow-backend:v1.0.0
+
+          ports:
+            - containerPort: 3000
+
+          env:
+            - name: NODE_ENV
+              value: "production"
+
+            - name: PORT
+              value: "3000"
+
+            - name: DB_HOST
+              value: "taskflow-postgres"
+
+            - name: DB_PORT
+              value: "5432"
+
+            - name: DB_NAME
+              value: "taskflow"
+
+            - name: DB_USER
+              value: "taskflow"
+
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: taskflow-postgres-secret
+                  key: POSTGRES_PASSWORD

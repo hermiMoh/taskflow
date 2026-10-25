@@ -18,3 +18,12 @@ npm-debug.log*
 
 # OS
 .DS_Store
+
+
+aws-env.sh
+
+# Jenkins backups and sensitive files
+jenkins-home-backup.tar.gz
+*.tar.gz
+
+infrastructure/eks/cluster.yaml

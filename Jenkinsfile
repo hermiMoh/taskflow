@@ -1,6 +1,10 @@
 pipeline {
     agent any
 
+    options {
+        disableConcurrentBuilds()
+    }
+
     environment {
         CI_NETWORK = 'taskflow-ci'
         TEST_DB_CONTAINER = 'taskflow-postgres-test'
@@ -12,6 +16,15 @@ pipeline {
         DB_PASSWORD = 'postgres_test_password'
 
         DOCKERHUB_USERNAME = 'medhermi'
+
+        // AWS ECR and EKS configuration
+        AWS_DEFAULT_REGION = 'eu-north-1'
+        AWS_ACCOUNT_ID = '453971897797'
+        EKS_CLUSTER = 'taskflow-cluster'
+        K8S_NAMESPACE = 'taskflow'
+
+        ECR_REGISTRY = '453971897797.dkr.ecr.eu-north-1.amazonaws.com'
+        // END AWS ECR and EKS configuration
     }
 
     stages {
@@ -245,24 +258,161 @@ pipeline {
                 }
             }
         }
+
+
+        stage('Push Images to Amazon ECR') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'aws-taskflow-jenkins',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+                    sh '''
+                        set -eu
+
+                        echo "Authenticating to Amazon ECR..."
+
+                        aws ecr get-login-password \
+                            --region "$AWS_DEFAULT_REGION" | \
+                            docker login \
+                            --username AWS \
+                            --password-stdin "$ECR_REGISTRY"
+
+                        echo "Tagging backend image..."
+
+                        docker tag \
+                            taskflow-backend:$APP_VERSION \
+                            $ECR_REGISTRY/taskflow-backend:$GIT_SHORT_SHA
+
+                        echo "Tagging frontend image..."
+
+                        docker tag \
+                            taskflow-frontend:$APP_VERSION \
+                            $ECR_REGISTRY/taskflow-frontend:$GIT_SHORT_SHA
+
+                        echo "Pushing backend image..."
+
+                        docker push \
+                            $ECR_REGISTRY/taskflow-backend:$GIT_SHORT_SHA
+
+                        echo "Pushing frontend image..."
+
+                        docker push \
+                            $ECR_REGISTRY/taskflow-frontend:$GIT_SHORT_SHA
+
+                        echo "Images published successfully."
+                    '''
+                }
+            }
+        }
+
+
+
+        stage('Deploy to Amazon EKS') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'aws-taskflow-jenkins',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+                    sh '''
+                        set -eu
+
+                        export KUBECONFIG="$WORKSPACE/kubeconfig"
+
+                        echo "Connecting to Amazon EKS..."
+
+                        aws eks update-kubeconfig \
+                            --name "$EKS_CLUSTER" \
+                            --region "$AWS_DEFAULT_REGION"
+
+                        echo "Deploying backend..."
+
+                        kubectl set image \
+                            deployment/taskflow-backend \
+                            backend=$ECR_REGISTRY/taskflow-backend:$GIT_SHORT_SHA \
+                            -n "$K8S_NAMESPACE"
+
+                        echo "Deploying frontend..."
+
+                        kubectl set image \
+                            deployment/taskflow-frontend \
+                            frontend=$ECR_REGISTRY/taskflow-frontend:$GIT_SHORT_SHA \
+                            -n "$K8S_NAMESPACE"
+
+                        echo "Kubernetes Deployments updated."
+                    '''
+                }
+            }
+        }
+
+
+        stage('Verify EKS Rollout') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'aws-taskflow-jenkins',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+                    sh '''
+                        set -eu
+
+                        export KUBECONFIG="$WORKSPACE/kubeconfig"
+
+                        echo "Checking backend rollout..."
+
+                        kubectl rollout status \
+                            deployment/taskflow-backend \
+                            -n "$K8S_NAMESPACE" \
+                            --timeout=180s
+
+                        echo "Checking frontend rollout..."
+
+                        kubectl rollout status \
+                            deployment/taskflow-frontend \
+                            -n "$K8S_NAMESPACE" \
+                            --timeout=180s
+
+                        echo "Current Deployments:"
+
+                        kubectl get deployments \
+                            -n "$K8S_NAMESPACE"
+
+                        echo "Current Pods:"
+
+                        kubectl get pods \
+                            -n "$K8S_NAMESPACE"
+
+                        echo "TaskFlow deployment successful!"
+                    '''
+                }
+            }
+        }   
     }
 
     post {
-
         always {
-            echo 'Cleaning TaskFlow CI resources...'
+            echo 'Cleaning TaskFlow CI/CD resources...'
 
             sh '''
-                docker rm -f $TEST_DB_CONTAINER 2>/dev/null || true
+                docker rm -f "$TEST_DB_CONTAINER" 2>/dev/null || true
+
+                rm -f "$WORKSPACE/kubeconfig"
             '''
         }
 
         success {
-            echo 'TaskFlow backend CI passed!'
+            echo 'TaskFlow CI/CD pipeline completed successfully!'
         }
 
         failure {
-            echo 'TaskFlow backend CI failed.'
+            echo 'TaskFlow CI/CD pipeline failed.'
         }
     }
 }
