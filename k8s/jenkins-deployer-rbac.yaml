@@ -34,6 +34,13 @@ rules:
     verbs:
       - create
 
+    # Allow Jenkins to read Kubernetes Services
+  - apiGroups: [""]
+    resources:
+      - services
+    verbs:
+      - get
+
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
